@@ -16,9 +16,8 @@ public class MovingSphere : MonoBehaviour
 	// Jump related things here
 	bool desiredJump;
 	//bool onGround;
-	int groundContactCount;
+	int groundContactCount, stepsSinceLastJump;
 	bool OnGround => groundContactCount > 0;
-
 	[SerializeField, Range(0f, 10f)]
 	float jumpHeight = 2f;
 	[SerializeField, Range(0, 5)]
@@ -28,17 +27,44 @@ public class MovingSphere : MonoBehaviour
 	float maxGroundAngle = 25f;
 	float minGroundDotProduct;
 	Vector3 contactNormal;
-
+	int stepsSinceLastGrounded;
+	[SerializeField, Range(0f, 100f)]
+	float maxSnapSpeed = 100f;
+	[SerializeField, Min(0f)]
+	float probeDistance = 1f;
+	[SerializeField]
+	LayerMask probeMask = -1;
 
 	Vector3 ProjectOnContactPlane (Vector3 vector) {
 		return vector - contactNormal * Vector3.Dot(vector, contactNormal);
+	}
+	bool SnapToGround () {
+		if (stepsSinceLastGrounded > 1 ||stepsSinceLastJump >= 2) {
+			return false;
+		}
+		float speed = velocity.magnitude;
+		if (speed > maxSnapSpeed) {
+			return false;
+		}
+		if (!Physics.Raycast(body.position, Vector3.down, out RaycastHit hit, probeDistance, probeMask)) {
+			return false;
+		}
+		if (hit.normal.y < minGroundDotProduct) {
+			return false;
+		}
+		groundContactCount = 1;
+		contactNormal = hit.normal;
+		float dot = Vector3.Dot(velocity, hit.normal);
+		if (dot > 0f) {
+			velocity = (velocity - hit.normal * dot).normalized * speed;
+		}
+		return true;
 	}
 
 
 	void OnValidate () {
 		minGroundDotProduct = Mathf.Cos(maxGroundAngle * Mathf.Deg2Rad);
 	}
-
 
 	void Awake () {
 		body = GetComponent<Rigidbody>();
@@ -55,9 +81,9 @@ public class MovingSphere : MonoBehaviour
 			new Vector3(playerInput.x, 0f, playerInput.y) * maxSpeed;
 		desiredJump |= Input.GetButtonDown("Jump");
 
-		// Changing color based on groundcontactpoints
+		// Changing color based on OnGround
 		GetComponent<Renderer>().material.SetColor(
-			"_Color", Color.white * (groundContactCount * 0.25f)
+			"_Color", OnGround ? Color.black : Color.white
 		);
     }
 
@@ -109,8 +135,11 @@ public class MovingSphere : MonoBehaviour
 	}
 
 	void UpdateState () {
+		stepsSinceLastGrounded += 1;
+		stepsSinceLastJump += 1;
 		velocity = body.velocity;
-		if (OnGround) {
+		if (OnGround || SnapToGround()) {
+			stepsSinceLastGrounded = 0;
 			jumpPhase = 0;
 			if (groundContactCount > 1) {
 				contactNormal.Normalize();
@@ -123,6 +152,7 @@ public class MovingSphere : MonoBehaviour
 
 	void Jump() {
 		if (OnGround || jumpPhase < maxAirJumps) {
+			stepsSinceLastJump = 0;
 			jumpPhase += 1;
 			float jumpSpeed = Mathf.Sqrt(-2f * Physics.gravity.y * jumpHeight);
 			float alignedSpeed = Vector3.Dot(velocity, contactNormal);
